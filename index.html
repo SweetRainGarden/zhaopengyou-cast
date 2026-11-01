@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>找朋友 · 电视</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  找朋友 投屏到电视: the Google Cast Web Receiver (CAF v3). The phone's app sends the table's public picture as JSON
+  (TvTableFrame, core/presentation/.../table/TvCast.kt) on the namespace below; this page only draws it — no
+  server, no login, no rules engine. Host it on any HTTPS URL and register that URL as a Custom Receiver in the
+  Google Cast Developer Console; the App ID the console gives you is the APK's -Pzpy.castAppId (docs/CAST.md).
+  Cards arrive as text ("♠A", "大王"); the frame never carries the sender's hand.
+-->
+<style>
+  :root {
+    --felt: #1f4d3a; --felt-deep: #163828; --rule: rgba(255,255,255,.14);
+    --ink: #f3efe4; --ink-soft: rgba(243,239,228,.72); --gold: #e3b65a; --rain: #8fc1d6; --red: #d95f55;
+    --card: #fbf8f0; --card-ink: #1b1b1b; --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at center, var(--felt) 0%, var(--felt-deep) 75%); color: var(--ink);
+    font-family: "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif; overflow: hidden; }
+  #app { position: relative; width: 100vw; height: 100vh; }
+  header { position: absolute; top: 0; left: 0; right: 0; height: 9vh; display: flex; align-items: center; gap: 3vw;
+    padding: 0 4vw; font-size: 3.2vh; border-bottom: 1px solid var(--rule); background: rgba(0,0,0,.18); }
+  header .gid { color: var(--ink-soft); }
+  header .phase { font-weight: 700; font-size: 3.8vh; }
+  header .level { margin-left: auto; font-size: 3.4vh; }
+  header .level b { font-size: 4.6vh; color: var(--gold); }
+  header .trump { font-size: 4.2vh; font-weight: 700; }
+  header .trump.red { color: var(--red); }
+  header .status { font-size: 3vh; color: var(--gold); border: 1px solid var(--gold); border-radius: 999px; padding: .2vh 1.6vw; }
+  #table { position: absolute; top: 9vh; bottom: 8vh; left: 0; right: 0; }
+  .seat { position: absolute; width: 22vw; transform: translate(-50%, -50%); text-align: center; }
+  .seat .box { display: inline-block; min-width: 16vw; padding: 1.2vh 1.6vw; border-radius: var(--radius); background: rgba(0,0,0,.28);
+    border: 2px solid transparent; }
+  .seat.turn .box { border-color: var(--gold); box-shadow: 0 0 2.4vh rgba(227,182,90,.55); }
+  .seat.offline .box { opacity: .55; }
+  .seat .nick { font-size: 3.4vh; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 20vw; }
+  .seat .meta { font-size: 2.4vh; color: var(--ink-soft); margin-top: .4vh; display: flex; gap: 1vw; justify-content: center; flex-wrap: wrap; }
+  .tag { display: inline-block; padding: 0 .9vw; border-radius: 999px; font-size: 2.2vh; line-height: 3.2vh; }
+  .tag.banker { background: var(--gold); color: #3b2a05; font-weight: 700; }
+  .tag.friend { background: var(--rain); color: #0e2a36; font-weight: 700; }
+  .tag.up { border: 1px solid var(--gold); color: var(--gold); }
+  .tag.down { border: 1px solid var(--ink-soft); color: var(--ink-soft); }
+  .tag.bot { border: 1px solid var(--rule); color: var(--ink-soft); }
+  .tag.caster { background: rgba(255,255,255,.12); }
+  .seat .pts { font-size: 2.6vh; color: var(--gold); }
+  .play { position: absolute; transform: translate(-50%, -50%); display: flex; gap: .6vw; justify-content: center; flex-wrap: wrap; max-width: 22vw; }
+  .card { display: inline-flex; align-items: center; justify-content: center; width: 5.2vh; height: 7.4vh; border-radius: .9vh;
+    background: var(--card); color: var(--card-ink); font-size: 3vh; font-weight: 700; box-shadow: 0 .4vh 1vh rgba(0,0,0,.35); }
+  .card.red { color: #c0392b; }
+  .card.joker { font-size: 2vh; }
+  .card.small { width: 3.6vh; height: 5.2vh; font-size: 2vh; border-radius: .6vh; }
+  #center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--ink-soft); font-size: 2.4vh; width: 30vw; }
+  #center .big { font-size: 4.6vh; color: var(--ink); font-weight: 700; }
+  #center .decl { font-size: 2.2vh; margin-top: .6vh; }
+  footer { position: absolute; bottom: 0; left: 0; right: 0; height: 8vh; display: flex; align-items: center; gap: 3vw; padding: 0 4vw;
+    border-top: 1px solid var(--rule); background: rgba(0,0,0,.18); font-size: 2.8vh; color: var(--ink-soft); }
+  footer .meter { flex: 1; height: 1.6vh; border-radius: 999px; background: rgba(0,0,0,.35); position: relative; overflow: hidden; }
+  footer .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--gold); }
+  footer .meter .line { position: absolute; top: 0; bottom: 0; width: .3vw; background: var(--ink); }
+  footer .last { display: flex; align-items: center; gap: .6vw; }
+  #settle { position: absolute; inset: 12vh 18vw; border-radius: var(--radius); background: rgba(10,22,16,.94); display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 2vh; font-size: 3.4vh; }
+  #settle .verdict { font-size: 6.4vh; font-weight: 800; color: var(--gold); }
+  #settle .buried { display: flex; gap: .6vw; flex-wrap: wrap; justify-content: center; }
+  #idle { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; }
+  #idle .title { font-size: 9vh; font-weight: 800; letter-spacing: .4vw; }
+  #idle .sub { font-size: 3.4vh; color: var(--ink-soft); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="idle">
+    <div class="title">找朋友</div>
+    <div class="sub">手机已连接，等牌桌开始…</div>
+  </div>
+  <div id="live" class="hidden">
+    <header>
+      <span class="gid" id="gid"></span>
+      <span class="phase" id="phase"></span>
+      <span class="status" id="status"></span>
+      <span class="level" id="level"></span>
+      <span class="trump" id="trump"></span>
+    </header>
+    <div id="table">
+      <div id="center"></div>
+      <div id="seats"></div>
+    </div>
+    <footer id="footer"></footer>
+    <div id="settle"></div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<script>
+  const NAMESPACE = 'urn:x-cast:garden.sweetrain.zhaopengyou.table';
+  const VERSION = 1;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function cardHtml(text, small) {
+    const red = text.startsWith('♥') || text.startsWith('♦') || text === '大王';
+    const joker = text === '大王' || text === '小王';
+    return `<span class="card${red ? ' red' : ''}${joker ? ' joker' : ''}${small ? ' small' : ''}">${esc(text)}</span>`;
+  }
+
+  // Seats sit on an ellipse, the sender's own seat at the bottom and the next seat (下家) to its right, the way
+  // the play goes round a real table; each seat's cards this trick lie on an inner ellipse, towards the middle.
+  function seatPositions(n, caster) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const k = ((i - (caster >= 0 ? caster : 0)) % n + n) % n; // 0 = bottom
+      const a = Math.PI / 2 - (k / n) * 2 * Math.PI;             // counter-clockwise on screen from the bottom
+      out.push({
+        x: 50 + 39 * Math.cos(a), y: 50 + 38 * Math.sin(a),
+        px: 50 + 21 * Math.cos(a), py: 50 + 20 * Math.sin(a),
+      });
+    }
+    return out;
+  }
+
+  function render(f) {
+    if (!f || f.phase === 'idle') { $('idle').classList.remove('hidden'); $('live').classList.add('hidden'); return; }
+    $('idle').classList.add('hidden'); $('live').classList.remove('hidden');
+    if (f.v !== VERSION) { $('center').innerHTML = `<div class="big">请更新电视端</div><div>App 发来的格式是 v${esc(f.v)}，这页只认 v${VERSION}</div>`; return; }
+
+    $('gid').textContent = `桌 ${f.gid} · 第 ${f.handNo} 局`;
+    $('phase').textContent = f.phaseText || '';
+    const st = { paused: '暂停中', ended: '本场已结束', closed: '已解散' }[f.tableStatus];
+    $('status').textContent = st || ''; $('status').classList.toggle('hidden', !st);
+    $('level').innerHTML = f.level ? `打 <b>${esc(f.level)}</b>` : '';
+    const t = $('trump'); t.textContent = f.trump ? `${f.trump} 主` : ''; t.classList.toggle('red', f.trump === '♥' || f.trump === '♦');
+
+    // Seats and what each put on the table this trick.
+    const byTrick = {}; (f.trick || []).forEach((p) => { byTrick[p.seat] = p.cards; });
+    const pos = seatPositions(f.seats.length, f.caster);
+    $('seats').innerHTML = f.seats.map((s, i) => {
+      const tags = [];
+      if (s.banker) tags.push('<span class="tag banker">庄</span>');
+      if (s.friend) tags.push('<span class="tag friend">朋友</span>');
+      if (!s.banker && !s.friend && s.side === 'up') tags.push('<span class="tag up">台上</span>');
+      if (s.side === 'down') tags.push('<span class="tag down">台下</span>');
+      if (s.bot) tags.push('<span class="tag bot">代打</span>');
+      if (i === f.caster) tags.push('<span class="tag caster">投屏手机</span>');
+      const pts = s.points != null ? `<span class="pts">${s.points} 分</span>` : '';
+      const play = (byTrick[i] || []).map((c) => cardHtml(c)).join('');
+      const cls = ['seat', f.turn === i ? 'turn' : '', s.offline ? 'offline' : ''].join(' ');
+      return `<div class="${cls}" style="left:${pos[i].x}%;top:${pos[i].y}%">
+        <div class="box">
+          <div class="nick">${esc(s.nick)}</div>
+          <div class="meta"><span>打${esc(s.level)}</span><span>${s.handSize} 张</span>${pts}${tags.join('')}</div>
+        </div>
+      </div>
+      <div class="play" style="left:${pos[i].px}%;top:${pos[i].py}%">${play}</div>`;
+    }).join('');
+
+    // The middle: the phase's headline, the 亮主 record, the friend calls.
+    let center = '';
+    if (f.phase === 'play') {
+      center = `<div class="big">第 ${f.trickNo} 墩</div>` + (f.trickLeader != null && f.seats[f.trickLeader] ? `<div>${esc(f.seats[f.trickLeader].nick)} 先出</div>` : '');
+    } else if (f.phase === 'declare' || f.phase === 'deal' || f.phase === 'crypt') {
+      center = `<div class="big">${esc(f.phaseText)}</div>`;
+    } else if (f.phase === 'bury') {
+      center = `<div class="big">庄家扣底</div>`;
+    } else if (f.phase === 'call') {
+      center = `<div class="big">叫朋友</div>`;
+    } else if (f.phase === 'lobby') {
+      center = `<div class="big">牌桌设置</div><div>等房主发牌</div>`;
+    } else if (f.phase === 'settle') {
+      center = `<div class="big">第 ${f.handNo} 局结束</div>`;
+    }
+    if (f.declarations && f.declarations.length) center += `<div class="decl">亮主：${f.declarations.map(esc).join(' → ')}</div>`;
+    if (f.calls && f.calls.length) center += `<div class="decl">叫朋友：${f.calls.map(esc).join('，')}</div>`;
+    $('center').innerHTML = center;
+
+    // The strip: 台下 points against the 换庄线, and 上一墩.
+    let foot = '';
+    if (f.downPoints != null) {
+      const total = Math.max(f.line ? f.line * 2 : 200, 1);
+      const fill = Math.min(100, (f.downPoints / total) * 100);
+      const line = f.line ? Math.min(100, (f.line / total) * 100) : null;
+      foot += `<span>台下 <b style="color:var(--gold);font-size:3.6vh">${f.downPoints}</b></span>
+        <div class="meter"><div class="fill" style="width:${fill}%"></div>${line != null ? `<div class="line" style="left:${line}%"></div>` : ''}</div>
+        ${f.line ? `<span>线 ${f.line}</span>` : ''}`;
+    }
+    if (f.lastTrick && f.seats[f.lastTrick.winner]) {
+      const lt = f.lastTrick;
+      const cards = lt.plays.flatMap((p) => p.cards).slice(0, 12).map((c) => cardHtml(c, true)).join('');
+      foot += `<span class="last">上一墩 ${esc(f.seats[lt.winner].nick)} 收${lt.pts ? `，${lt.pts} 分` : ''} ${cards}</span>`;
+    }
+    $('footer').innerHTML = foot;
+
+    // 结算 overlay with the verdict and the 底牌 (public now).
+    const s = $('settle');
+    if (f.settle) {
+      s.style.display = 'flex';
+      s.innerHTML = `<div class="verdict">${esc(f.settle.verdict)}</div>
+        <div>台下共 ${f.settle.total} 分${f.settle.kittyGain ? `（抠底 ${f.settle.kittyGain}）` : ''}</div>
+        ${f.settle.buried.length ? `<div>底牌</div><div class="buried">${f.settle.buried.map((c) => cardHtml(c)).join('')}</div>` : ''}`;
+    } else {
+      s.style.display = 'none';
+    }
+  }
+
+  // Cast receiver wiring; without the SDK (opening the file in a browser) the page shows its idle card and takes
+  // frames from window.postMessage, which is how docs/CAST.md says to try a layout without a TV.
+  window.addEventListener('message', (e) => { if (e.data && e.data.gid) render(e.data); });
+  if (window.cast && cast.framework) {
+    const context = cast.framework.CastReceiverContext.getInstance();
+    context.addCustomMessageListener(NAMESPACE, (event) => {
+      try { render(typeof event.data === 'string' ? JSON.parse(event.data) : event.data); } catch (err) { console.error('bad frame', err); }
+    });
+    context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, () => {
+      if (context.getSenders().length === 0) context.stop();
+    });
+    const options = new cast.framework.CastReceiverOptions();
+    options.disableIdleTimeout = true; // a hand of 升级 can be quiet for a while; the TV stays on the table
+    options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.STRING };
+    context.start(options);
+  }
+  render(null);
+</script>
+</body>
+</html>
